@@ -39,14 +39,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+
+import okhttp3.Response;
 
 public class API {
 
@@ -148,7 +148,7 @@ public class API {
         url = url.startsWith("https") ? url : "https://api.aliyundrive.com/" + url;
         OkResult result = OkHttp.postJson(url, json, getHeaderAuth());
         SpiderDebug.log(result.getCode() + "," + url + "," + result.getBody());
-        if (retry && result.getCode() == 401 && refreshAccessToken()) return auth(url, json, false);
+        if (retry && (result.getCode() == 400 || result.getCode() == 401) && refreshAccessToken()) return auth(url, json, false);
         if (retry && result.getCode() == 429) return auth(url, json, false);
         return result.getBody();
     }
@@ -157,7 +157,7 @@ public class API {
         url = url.startsWith("https") ? url : "https://open.aliyundrive.com/adrive/v1.0/" + url;
         OkResult result = OkHttp.postJson(url, json, getHeaderOpen());
         SpiderDebug.log(result.getCode() + "," + url + "," + result.getBody());
-        if (retry && result.getCode() == 401 && refreshOpenToken()) return oauth(url, json, false);
+        if (retry && (result.getCode() == 400 || result.getCode() == 401) && refreshOpenToken()) return oauth(url, json, false);
         return result.getBody();
     }
 
@@ -262,12 +262,12 @@ public class API {
         String result = post("adrive/v3/share_link/get_share_by_anonymous", body);
         JSONObject object = new JSONObject(result);
         List<Item> files = new ArrayList<>();
-        LinkedHashMap<String, List<String>> subMap = new LinkedHashMap<>();
-        listFiles(new Item(getParentFileId(fileId, object)), files, subMap);
+        List<Item> subs = new ArrayList<>();
+        listFiles(new Item(getParentFileId(fileId, object)), files, subs);
         List<String> playFrom = Arrays.asList("原畫", "超清", "高清");
         List<String> episode = new ArrayList<>();
         List<String> playUrl = new ArrayList<>();
-        for (Item file : files) episode.add(file.getDisplayName() + "$" + file.getFileId() + findSubs(file.getName(), subMap));
+        for (Item file : files) episode.add(file.getDisplayName() + "$" + file.getFileId() + findSubs(file.getName(), subs));
         for (int i = 0; i < playFrom.size(); i++) playUrl.add(TextUtils.join("#", episode));
         Vod vod = new Vod();
         vod.setVodId(url);
@@ -280,11 +280,11 @@ public class API {
         return vod;
     }
 
-    private void listFiles(Item folder, List<Item> files, LinkedHashMap<String, List<String>> subMap) throws Exception {
-        listFiles(folder, files, subMap, "");
+    private void listFiles(Item folder, List<Item> files, List<Item> subs) throws Exception {
+        listFiles(folder, files, subs, "");
     }
 
-    private void listFiles(Item parent, List<Item> files, LinkedHashMap<String, List<String>> subMap, String marker) throws Exception {
+    private void listFiles(Item parent, List<Item> files, List<Item> subs, String marker) throws Exception {
         JSONObject body = new JSONObject();
         List<Item> folders = new ArrayList<>();
         body.put("limit", 200);
@@ -300,16 +300,14 @@ public class API {
             } else if (file.getCategory().equals("video") || file.getCategory().equals("audio")) {
                 files.add(file.parent(parent.getName()));
             } else if (Utils.isSub(file.getExt())) {
-                String key = Utils.removeExt(file.getName());
-                if (!subMap.containsKey(key)) subMap.put(key, new ArrayList<>());
-                subMap.get(key).add(key + "@@@" + file.getExt() + "@@@" + file.getFileId());
+                subs.add(file);
             }
         }
         if (item.getNextMarker().length() > 0) {
-            listFiles(parent, files, subMap, item.getNextMarker());
+            listFiles(parent, files, subs, item.getNextMarker());
         }
         for (Item folder : folders) {
-            listFiles(folder, files, subMap);
+            listFiles(folder, files, subs);
         }
     }
 
@@ -323,18 +321,19 @@ public class API {
         return "";
     }
 
-    private String findSubs(String name, Map<String, List<String>> subMap) {
-        name = name.substring(0, name.lastIndexOf("."));
-        List<String> subs = subMap.get(name);
-        if (subs != null && subs.size() > 0) return combineSubs(subs);
-        StringBuilder sb = new StringBuilder();
-        for (Map.Entry<String, List<String>> entry : subMap.entrySet()) sb.append(combineSubs(entry.getValue()));
-        return sb.toString();
+    private void pair(String name1, List<Item> items, List<Item> subs) {
+        for (Item item : items) {
+            String name2 = Utils.removeExt(item.getName()).toLowerCase();
+            if (name1.contains(name2) || name2.contains(name1)) subs.add(item);
+        }
     }
 
-    private String combineSubs(List<String> subs) {
+    private String findSubs(String name1, List<Item> items) {
+        List<Item> subs = new ArrayList<>();
+        pair(Utils.removeExt(name1).toLowerCase(), items, subs);
+        if (subs.isEmpty()) subs.addAll(items);
         StringBuilder sb = new StringBuilder();
-        for (String sub : subs) sb.append("+").append(sub);
+        for (Item sub : subs) sb.append("+").append(Utils.removeExt(sub.getName())).append("@@@").append(sub.getExt()).append("@@@").append(sub.getFileId());
         return sb.toString();
     }
 
@@ -439,10 +438,10 @@ public class API {
     }
 
     private void deleteAll() {
-        Iterator<String> iterator = tempIds.iterator();
-        while (iterator.hasNext()) {
-            boolean deleted = delete(iterator.next());
-            if (deleted) iterator.remove();
+        List<String> ids = new ArrayList<>(tempIds);
+        for (String id : ids) {
+            boolean deleted = delete(id);
+            if (deleted) tempIds.remove(id);
         }
     }
 
@@ -458,13 +457,14 @@ public class API {
         }
     }
 
-    public Object[] proxySub(Map<String, String> params) {
+    public Object[] proxySub(Map<String, String> params) throws Exception {
         String fileId = params.get("file_id");
-        String text = OkHttp.string(getDownloadUrl(fileId), getHeaderAuth());
+        Response res = OkHttp.newCall(getDownloadUrl(fileId), getHeaderAuth());
+        byte[] body = Utils.toUtf8(res.body().bytes());
         Object[] result = new Object[3];
         result[0] = 200;
         result[1] = "application/octet-stream";
-        result[2] = new ByteArrayInputStream(text.getBytes());
+        result[2] = new ByteArrayInputStream(body);
         return result;
     }
 

@@ -14,6 +14,7 @@ import android.webkit.WebViewClient;
 import com.github.catvod.spider.Init;
 
 import java.math.BigInteger;
+import java.nio.charset.Charset;
 import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.List;
@@ -46,6 +47,17 @@ public class Utils {
         boolean hasPhone = Init.context().getPackageManager().hasSystemFeature(PackageManager.FEATURE_TELEPHONY);
         boolean hasBT = Init.context().getPackageManager().hasSystemFeature(PackageManager.FEATURE_BLUETOOTH);
         return hasCamera && hasPhone && hasBT;
+    }
+
+    public static boolean isGbk(byte[] bytes) {
+        Charset charset = Charset.forName("GBK");
+        String str = new String(bytes, charset);
+        byte[] newBytes = str.getBytes(charset);
+        return Arrays.equals(bytes, newBytes);
+    }
+
+    public static byte[] toUtf8(byte[] bytes) throws Exception {
+        return isGbk(bytes) ? new String(bytes, Charset.forName("GBK")).getBytes("UTF-8") : bytes;
     }
 
     public static boolean isSub(String ext) {
@@ -150,6 +162,15 @@ public class Utils {
         try {
             ViewGroup group = Init.getActivity().getWindow().getDecorView().findViewById(android.R.id.content);
             group.addView(view, params);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void removeView(View view) {
+        try {
+            ViewGroup group = Init.getActivity().getWindow().getDecorView().findViewById(android.R.id.content);
+            group.removeView(view);
         } catch (Exception e) {
             e.printStackTrace();
         }
