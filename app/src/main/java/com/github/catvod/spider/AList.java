@@ -87,9 +87,11 @@ public class AList extends Spider {
         fetchRule();
         String type = extend.containsKey("type") ? extend.get("type") : "";
         String order = extend.containsKey("order") ? extend.get("order") : "";
+        String key = tid.contains("/") ? tid.substring(0, tid.indexOf("/")) : tid;
         List<Item> folders = new ArrayList<>();
         List<Item> files = new ArrayList<>();
         List<Vod> list = new ArrayList<>();
+
         for (Item item : getList(tid, true)) {
             if (item.isFolder()) folders.add(item);
             else files.add(item);
@@ -98,6 +100,12 @@ public class AList extends Spider {
             Sorter.sort(type, order, folders);
             Sorter.sort(type, order, files);
         }
+
+        int count = 0;
+        Drive drive = getDrive(key);
+        for (Item item : files) if (item.isMedia(drive.isNew())) count++;
+        if (count > 1) folders.add(0, Item.playList(files.get(0), vodPic));
+
         for (Item item : folders) list.add(item.getVod(tid, vodPic));
         for (Item item : files) list.add(item.getVod(tid, vodPic));
         return Result.get().vod(list).page().string();
@@ -107,24 +115,31 @@ public class AList extends Spider {
     public String detailContent(List<String> ids) throws Exception {
         fetchRule();
         String id = ids.get(0);
+        boolean list = id.endsWith("播放列表");
         String key = id.contains("/") ? id.substring(0, id.indexOf("/")) : id;
         String path = id.substring(0, id.lastIndexOf("/"));
         String name = path.substring(path.lastIndexOf("/") + 1);
         Drive drive = getDrive(key);
         List<Item> parents = getList(path, false);
         Sorter.sort("name", "asc", parents);
-        List<String> playUrls = new ArrayList<>();
-        for (Item item : parents) {
-            if (item.isMedia(drive.isNew())) {
-                playUrls.add(item.getName() + "$" + item.getVodId(path) + findSubs(path, parents));
-            }
-        }
         Vod vod = new Vod();
-        vod.setVodId(id);
-        vod.setVodName(name);
-        vod.setVodPic(vodPic);
         vod.setVodPlayFrom(key);
-        vod.setVodPlayUrl(TextUtils.join("#", playUrls));
+
+        if (list) {
+            vod.setVodId(id);
+            vod.setVodName(name);
+            vod.setVodPic(vodPic);
+            List<String> playUrls = new ArrayList<>();
+            for (Item item : parents) if (item.isMedia(drive.isNew())) playUrls.add(item.getName() + "$" + item.getVodId(path) + findSubs(path, parents));
+            vod.setVodPlayUrl(TextUtils.join("#", playUrls));
+        } else {
+            Item item = getDetail(id);
+            vod.setVodId(item.getVodId(id));
+            vod.setVodName(item.getName());
+            vod.setVodPic(item.getPic(vodPic));
+            vod.setVodPlayUrl(item.getName() + "$" + item.getVodId(path) + findSubs(path, parents));
+        }
+
         return Result.string(vod);
     }
 
